@@ -1,4 +1,12 @@
 /*
+ * Changed to comply with a definition of Nexa protocol in
+ * http://elektronikforumet.syntaxis.se/wiki/index.php?title=RF_Protokoll_-_Nexa_självlärande
+ * The timings of 1 and 0 have been inverted and the receiver to be
+ * controlled is defined by channel and unit (channel is physical 4-way
+ * switch in the current Nexa remote). Tested and works with current Nexa
+ * hardware available at the time of writing.
+ * Jussi Heikkilä 10/9/2013
+ *
  * HE300 Automatic Protocol Transmitter 'Simulator'
  * David Edmundson 21/11/2009
  *
@@ -41,70 +49,79 @@
   #endif
 #include "NexaTransmitter.h"
 
+#define delayOneHigh 250
+#define delayOneLow 250
+#define delayZeroHigh 250
+#define delayZeroLow 1250
 
 NexaTransmitter::NexaTransmitter(short pin, unsigned long remote) :
   txPin(pin),
   transmitterId(remote),
-  repeat(2) // repeat the transmition 2x
+  repeat(5) // repeat the transmission 5 times like the Nexa remote
 {
   pinMode(txPin, OUTPUT);      // transmitter pin.
 }
 
 
-//sends either an on/off signal to the main switch
-//always seems to work best if we send it twice..
-void NexaTransmitter::setSwitch(bool on, short recipient, short level)
+//transmit a command and dim level to the desired unit in the channel
+//there are 4 units in 4 channels, like in the default nexa remote
+void NexaTransmitter::setSwitch(bool on, short channel, short unit, short level)
 {
   for (int i = 0; i < repeat; i++) {
-    transmit(on, recipient, level);
+    transmit(on, channel, unit, level);
     delay(10);
   }
 }
 
 
-//sends either an on/off signal to the main switch
-void NexaTransmitter::transmit(bool blnOn, short recipient, short level)
+//transmit a single command
+void NexaTransmitter::transmit(bool blnOn, short channel, short unit, short level)
 {
   int i;
+  bool bitToSend;
   // Do the latch sequence..
   digitalWrite(txPin, HIGH);
-  delayMicroseconds(270);     // bit of radio shouting before we start. 
+  delayMicroseconds(delayOneHigh);     // bit of radio shouting before we start. 
   digitalWrite(txPin, LOW);
-  delayMicroseconds(2585);     // low for 9900 for latch 1
-  digitalWrite(txPin, HIGH);   // high again 
+  delayMicroseconds(2500);     // low for 2500 for latch 1
 
-  // End on a high
-  digitalWrite(txPin, HIGH);
-
-  // Send HE Device Address..
+  // Send transmitter device ID 
   // This is a 26 bit code.
   // Start at MSB and iterate through to the lowest
   for(i=25; i>=0; i--)
   {
-    //The typecasting seems a bit overkill, but 26 bits needs a long and the arduino compiler seems to love trying to 
+    //The typecasting seems a bit overkill, but 26 bits needs a long 
+    //and the arduino compiler seems to love trying to 
     //convert everything to an standard int.
     //creates bitmask of only relevant bit. Check and send a 1 or 0 as applicable.
-    bool bitToSend = (unsigned long)(transmitterId & ((unsigned long)1 << i)) != 0;
+    bitToSend = (unsigned long)(transmitterId & ((unsigned long)1 << i)) != 0;
     sendPair(bitToSend);
 
   }
 
-  // Send 26th bit - group 1/0
-  sendPair(false);
+  // Send 26th bit - group on(0) off(1)
+  sendPair(true);
 
   if (level > 0) {
-    // dimmer level was given send 00
-    sendBit(false);
-    sendBit(false);
+    // dimmer level was given, send 11
+    sendBit(true);
+    sendBit(true);
   } else {
-    // Send 27th bit - on/off 1/0
-    sendPair(blnOn);
+    // Send 27th bit - on(0)/off(1)
+    sendPair(!blnOn);
   }
 
-  // 4 bits - recipient
-  for(i=3; i>=0; i--)
+  // 2 bits - channel
+  for(i=1; i>=0; i--)
   {
-    bool bitToSend = (recipient & (1 << i)) != 0;
+    bitToSend = ((4-channel) & (1 << i)) != 0;
+    sendPair(bitToSend);
+  }
+
+  // 2 bits - unit
+  for(i=1; i>=0; i--)
+  {
+    bitToSend = ((4-unit) & (1 << i)) != 0;
     sendPair(bitToSend);
   }
 
@@ -112,15 +129,15 @@ void NexaTransmitter::transmit(bool blnOn, short recipient, short level)
     // send the dimmer level
     for(i=3; i>=0; i--)
     {
-      bool bitToSend = (level & (1 << i)) != 0;
+      bitToSend = (level & (1 << i)) != 0;
       sendPair(bitToSend);
     }
   }
 
-  digitalWrite(txPin, HIGH);   // high again (shut up)
-  delayMicroseconds(275);      // wait a moment
+  digitalWrite(txPin, HIGH);   // high again (stop)
+  delayMicroseconds(delayZeroHigh);      // wait a moment
   digitalWrite(txPin, LOW);    // low again for 2675 - latch 2.
-
+  //sendBit(false); // end with 0
 }
 
 void NexaTransmitter::sendBit(bool b)
@@ -128,16 +145,16 @@ void NexaTransmitter::sendBit(bool b)
   if (b)
   {
     digitalWrite(txPin, HIGH);
-    delayMicroseconds(275);
+    delayMicroseconds(delayOneHigh);
     digitalWrite(txPin, LOW);
-    delayMicroseconds(1240);
+    delayMicroseconds(delayOneLow);
   }
   else
   {
     digitalWrite(txPin, HIGH);
-    delayMicroseconds(258);
+    delayMicroseconds(delayZeroHigh);
     digitalWrite(txPin, LOW);
-    delayMicroseconds(258);
+    delayMicroseconds(delayZeroLow);
   }
 }
 
